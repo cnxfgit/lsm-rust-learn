@@ -1,8 +1,5 @@
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
-
 use std::sync::Arc;
-
+use bytes::Buf;
 use super::Block;
 
 /// Iterates on a block.
@@ -29,43 +26,88 @@ impl BlockIterator {
 
     /// Creates a block iterator and seek to the first entry.
     pub fn create_and_seek_to_first(block: Arc<Block>) -> Self {
-        unimplemented!()
+        let mut iter = Self::new(block);
+        iter.seek_to_first();
+        iter
     }
 
     /// Creates a block iterator and seek to the first key that >= `key`.
     pub fn create_and_seek_to_key(block: Arc<Block>, key: &[u8]) -> Self {
-        unimplemented!()
+        let mut iter = Self::new(block);
+        iter.seek_to_key(key);
+        iter
     }
 
     /// Returns the key of the current entry.
     pub fn key(&self) -> &[u8] {
-        unimplemented!()
+        debug_assert!(!self.key.is_empty(), "invalid iterator");
+        &self.key
     }
 
     /// Returns the value of the current entry.
     pub fn value(&self) -> &[u8] {
-        unimplemented!()
+        debug_assert!(!self.key.is_empty(), "invalid iterator");
+        &self.value
     }
 
     /// Returns true if the iterator is valid.
     /// Note: You may want to make use of `key`
     pub fn is_valid(&self) -> bool {
-        unimplemented!()
+        !self.key.is_empty()
     }
 
     /// Seeks to the first key in the block.
     pub fn seek_to_first(&mut self) {
-        unimplemented!()
+        self.seek_to(0);
     }
 
     /// Move to the next key in the block.
     pub fn next(&mut self) {
-        unimplemented!()
+        self.idx += 1;
+        self.seek_to(self.idx);
     }
 
     /// Seek to the first key that >= `key`.
     /// Note: You should assume the key-value pairs in the block are sorted when being added by callers.
     pub fn seek_to_key(&mut self, key: &[u8]) {
-        unimplemented!()
+        let mut low = 0;
+        let mut high = self.block.offsets.len();
+        while low < high {
+            let mid = low + (high - low) / 2;
+            self.seek_to(mid);
+            assert!(self.is_valid());
+            match self.key().cmp(key) {
+                std::cmp::Ordering::Less => low = mid + 1,
+                std::cmp::Ordering::Greater => high = mid,
+                std::cmp::Ordering::Equal => return,
+            }
+        }
+        self.seek_to(low);
+    }
+
+    fn seek_to(&mut self, idx: usize) {
+        if idx >= self.block.offsets.len() {
+            self.key.clear();
+            return;
+        }
+        self.idx = idx;
+
+        let offset = self.block.offsets.get(self.idx);
+        if let Some(offset) = offset {
+            let offset = *offset as usize;
+            let mut entry = &self.block.data[offset..];
+            let key_len = entry.get_u16() as usize;
+            let key = entry[..key_len].to_vec();
+            self.key.clear();
+            self.key.extend(key);
+            entry.advance(key_len);
+
+            let value_len = entry.get_u16() as usize;
+            let value: Vec<u8> = entry[..value_len].to_vec();
+            self.value.clear();
+            self.value.extend(value);
+        } else {
+            self.key.clear();
+        }
     }
 }
