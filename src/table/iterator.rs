@@ -6,10 +6,14 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use super::SsTable;
-use crate::iterators::StorageIterator;
+use crate::{iterators::StorageIterator, block::BlockIterator};
 
 /// An iterator over the contents of an SSTable.
-pub struct SsTableIterator {}
+pub struct SsTableIterator {
+    table: Arc<SsTable>,
+    block_iterator: BlockIterator,
+    block_idx: usize,
+}
 
 impl SsTableIterator {
     /// Create a new iterator and seek to the first key-value pair in the first data block.
@@ -19,7 +23,7 @@ impl SsTableIterator {
 
     /// Seek to the first key-value pair in the first data block.
     pub fn seek_to_first(&mut self) -> Result<()> {
-        unimplemented!()
+        Ok(())
     }
 
     /// Create a new iterator and seek to the first key-value pair which >= `key`.
