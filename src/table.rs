@@ -1,13 +1,10 @@
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
-
 mod builder;
 mod iterator;
 
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 pub use builder::SsTableBuilder;
 use bytes::{Buf, BufMut, Bytes};
 pub use iterator::SsTableIterator;
@@ -81,7 +78,7 @@ impl FileObject {
         Ok(file_object)
     }
 
-    pub fn open(path: &Path) -> Result<Self> {
+    pub fn open(_path: &Path) -> Result<Self> {
         unimplemented!()
     }
 }
@@ -98,6 +95,8 @@ pub struct SsTable {
     block_metas: Vec<BlockMeta>,
     /// The offset that indicates the start point of meta blocks in `file`.
     block_meta_offset: usize,
+    id: usize,
+    block_cache: Option<Arc<BlockCache>>,
 }
 
 impl SsTable {
@@ -108,29 +107,56 @@ impl SsTable {
 
     /// Open SSTable from a file.
     pub fn open(id: usize, block_cache: Option<Arc<BlockCache>>, file: FileObject) -> Result<Self> {
-        unimplemented!()
+        let len = file.size();
+        let raw_meta_offset = file.read(len - 4, 4)?;
+        let block_meta_offset = (&raw_meta_offset[..]).get_u32() as u64;
+        let raw_meta = file.read(block_meta_offset, len - 4 - block_meta_offset)?;
+        Ok(Self {
+            file,
+            block_metas: BlockMeta::decode_block_meta(&raw_meta[..]),
+            block_meta_offset: block_meta_offset as usize,
+            id,
+            block_cache,
+        })
     }
 
     /// Read a block from the disk.
     pub fn read_block(&self, block_idx: usize) -> Result<Arc<Block>> {
-        unimplemented!()
+        let offset = self.block_metas[block_idx].offset;
+        let offset_end = self
+            .block_metas
+            .get(block_idx + 1)
+            .map_or(self.block_meta_offset, |x| x.offset);
+        let block_data = self
+            .file
+            .read(offset as u64, (offset_end - offset) as u64)?;
+        Ok(Arc::new(Block::decode(&block_data[..])))
     }
 
     /// Read a block from disk, with block cache. (Day 4)
     pub fn read_block_cached(&self, block_idx: usize) -> Result<Arc<Block>> {
-        unimplemented!()
+        if let Some(ref block_cache) = self.block_cache {
+            let block = block_cache
+                .try_get_with((self.id, block_idx), || self.read_block(block_idx))
+                .map_err(|e| anyhow!("{}", e))?;
+            Ok(block)
+        } else {
+            self.read_block(block_idx)
+        }
     }
 
     /// Find the block that may contain `key`.
     /// Note: You may want to make use of the `first_key` stored in `BlockMeta`.
     /// You may also assume the key-value pairs stored in each consecutive block are sorted.
     pub fn find_block_idx(&self, key: &[u8]) -> usize {
-        unimplemented!()
+        self.block_metas
+            .partition_point(|meta| meta.first_key <= key)
+            .saturating_sub(1)
     }
 
     /// Get number of data blocks.
     pub fn num_of_blocks(&self) -> usize {
-        unimplemented!()
+        self.block_metas.len()
     }
 }
 

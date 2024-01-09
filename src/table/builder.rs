@@ -83,6 +83,8 @@ impl SsTableBuilder {
             file,
             block_metas: self.meta,
             block_meta_offset: meta_offset,
+            id,
+            block_cache,
         })
     }
 
