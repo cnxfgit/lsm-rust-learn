@@ -1,6 +1,7 @@
 mod builder;
 mod iterator;
 
+use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -60,22 +61,27 @@ impl BlockMeta {
 }
 
 /// A file object.
-pub struct FileObject(Bytes);
+pub struct FileObject(File, u64);
 
 impl FileObject {
     pub fn read(&self, offset: u64, len: u64) -> Result<Vec<u8>> {
-        Ok(self.0[offset as usize..(offset + len) as usize].to_vec())
+        use std::os::unix::fs::FileExt;
+        let mut data = vec![0; len as usize];
+        self.0.read_exact_at(&mut data[..], offset)?;
+        Ok(data)
     }
 
     pub fn size(&self) -> u64 {
-        self.0.len() as u64
+        self.1
     }
 
-    /// Create a new file object (day 2) and write the file to the disk (day 4).
+    /// Create a new file object (day 2) and write the file to the disk (G).
     pub fn create(path: &Path, data: Vec<u8>) -> Result<Self> {
-        let file_object = FileObject(Bytes::copy_from_slice(data.as_slice()));
-        std::fs::write(path, data)?;
-        Ok(file_object)
+        std::fs::write(path, &data)?;
+        Ok(FileObject(
+            File::options().read(true).write(false).open(path)?,
+            data.len() as u64,
+        ))
     }
 
     pub fn open(_path: &Path) -> Result<Self> {
