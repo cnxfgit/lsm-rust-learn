@@ -3,13 +3,11 @@ use std::ops::Bound;
 use anyhow::Result;
 use bytes::Bytes;
 
-use crate::{
-    iterators::{
-        merge_iterator::MergeIterator, two_merge_iterator::TwoMergeIterator, StorageIterator,
-    },
-    mem_table::MemTableIterator,
-    table::SsTableIterator,
-};
+use crate::iterators::merge_iterator::MergeIterator;
+use crate::iterators::two_merge_iterator::TwoMergeIterator;
+use crate::iterators::StorageIterator;
+use crate::mem_table::MemTableIterator;
+use crate::table::SsTableIterator;
 
 type LsmIteratorInner =
     TwoMergeIterator<MergeIterator<MemTableIterator>, MergeIterator<SsTableIterator>>;
@@ -37,13 +35,11 @@ impl LsmIterator {
             self.is_valid = false;
             return Ok(());
         }
-
         match self.end_bound.as_ref() {
             Bound::Unbounded => {}
             Bound::Included(key) => self.is_valid = self.iter.key() <= key.as_ref(),
             Bound::Excluded(key) => self.is_valid = self.iter.key() < key.as_ref(),
         }
-
         Ok(())
     }
 

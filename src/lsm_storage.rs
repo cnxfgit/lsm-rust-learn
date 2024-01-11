@@ -1,4 +1,3 @@
-
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -58,7 +57,7 @@ impl LsmStorage {
             inner: Arc::new(RwLock::new(Arc::new(LsmStorageInner::create()))),
             flush_lock: Mutex::new(()),
             path: path.as_ref().to_path_buf(),
-            block_cache: Arc::new(BlockCache::new(1 << 20)),
+            block_cache: Arc::new(BlockCache::new(1 << 20)), // 4GB block cache
         })
     }
 
@@ -72,12 +71,12 @@ impl LsmStorage {
         // Search on the current memtable.
         if let Some(value) = snapshot.memtable.get(key) {
             if value.is_empty() {
+                // found tomestone, return key not exists
                 return Ok(None);
             }
             return Ok(Some(value));
         }
-
-        // Search on immutable memtable.
+        // Search on immutable memtables.
         for memtable in snapshot.imm_memtables.iter().rev() {
             if let Some(value) = memtable.get(key) {
                 if value.is_empty() {
@@ -87,7 +86,6 @@ impl LsmStorage {
                 return Ok(Some(value));
             }
         }
-
         let mut iters = Vec::new();
         iters.reserve(snapshot.l0_sstables.len());
         for table in snapshot.l0_sstables.iter().rev() {
@@ -96,7 +94,6 @@ impl LsmStorage {
                 key,
             )?));
         }
-
         let iter = MergeIterator::create(iters);
         if iter.is_valid() {
             return Ok(Some(Bytes::copy_from_slice(iter.value())));
@@ -110,14 +107,14 @@ impl LsmStorage {
         assert!(!key.is_empty(), "key cannot be empty");
 
         let guard = self.inner.read();
-        guard.memtable.put(key, b"");
+        guard.memtable.put(key, value);
 
         Ok(())
     }
 
     /// Remove a key from the storage by writing an empty value.
     pub fn delete(&self, key: &[u8]) -> Result<()> {
-        assert!(key.is_empty(), "key cannot be empty");
+        assert!(!key.is_empty(), "key cannot be empty");
 
         let guard = self.inner.read();
         guard.memtable.put(key, b"");
@@ -126,7 +123,7 @@ impl LsmStorage {
     }
 
     fn path_of_sst(&self, id: usize) -> PathBuf {
-        self.path.join(format!("{:05}.set", id))
+        self.path.join(format!("{:05}.sst", id))
     }
 
     /// Persist data to disk.
@@ -139,18 +136,23 @@ impl LsmStorage {
         let flush_memtable;
         let sst_id;
 
-        // Move mutable memtable to immutable memtable.
+        // Move mutable memtable to immutable memtables.
         {
             let mut guard = self.inner.write();
-            // Swap the current memtable with a new one.]
+            // Swap the current memtable with a new one.
             let mut snapshot = guard.as_ref().clone();
             let memtable = std::mem::replace(&mut snapshot.memtable, Arc::new(MemTable::create()));
             flush_memtable = memtable.clone();
             sst_id = snapshot.next_sst_id;
-
+            // Add the memtable to the immutable memtables.
             snapshot.imm_memtables.push(memtable);
+            // Update the snapshot.
             *guard = Arc::new(snapshot);
         }
+
+        // At this point, the old memtable should be disabled for write, and all write threads
+        // should be operating on the new memtable. We can safely flush the old memtable to
+        // disk.
 
         let mut builder = SsTableBuilder::new(4096);
         flush_memtable.flush(&mut builder)?;
@@ -160,13 +162,17 @@ impl LsmStorage {
             self.path_of_sst(sst_id),
         )?);
 
+        // Add the flushed L0 table to the list.
         {
             let mut guard = self.inner.write();
             let mut snapshot = guard.as_ref().clone();
-
+            // Remove the memtable from the immutable memtables.
             snapshot.imm_memtables.pop();
+            // Add L0 table
             snapshot.l0_sstables.push(sst);
+            // Update SST ID
             snapshot.next_sst_id += 1;
+            // Update the snapshot.
             *guard = Arc::new(snapshot);
         }
 
@@ -182,7 +188,7 @@ impl LsmStorage {
         let snapshot = {
             let guard = self.inner.read();
             Arc::clone(&guard)
-        };
+        }; // drop global lock here
 
         let mut memtable_iters = Vec::new();
         memtable_iters.reserve(snapshot.imm_memtables.len() + 1);
@@ -211,7 +217,6 @@ impl LsmStorage {
 
             table_iters.push(Box::new(iter));
         }
-
         let table_iter = MergeIterator::create(table_iters);
 
         let iter = TwoMergeIterator::create(memtable_iter, table_iter)?;
